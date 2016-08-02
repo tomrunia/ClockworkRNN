@@ -4,6 +4,18 @@ import tensorflow as tf
 
 class ClockworkRNN(object):
 
+
+    '''
+    A Clockwork RNN - Koutnik et al. 2014 [arXiv, https://arxiv.org/abs/1402.3511]
+
+    The Clockwork RNN (CW-RNN), in which the hidden layer is partitioned into separate modules,
+    each processing inputs at its own temporal granularity, making computations only at its prescribed clock rate.
+    Rather than making the standard RNN models more complex, CW-RNN reduces the number of RNN parameters,
+    improves the performance significantly in the tasks tested, and speeds up the network evaluation
+
+    '''
+
+
     def __init__(self, config):
 
         self.config = config
@@ -12,18 +24,11 @@ class ClockworkRNN(object):
         self.global_step = tf.Variable(0, name='global_step', trainable=False)
 
         # Initialize placeholders
-        self.inputs        = tf.placeholder(tf.float32, shape=[None, self.config.num_timesteps, self.config.num_input], name="inputs")
-        self.targets       = tf.placeholder(tf.float32, shape=[None, self.config.num_timesteps, self.config.num_output], name="targets")
-        self.learning_rate = tf.placeholder(tf.float32, shape=[], name="learning_rate")
-
-        # Periods of each group: 1,2,4, ..., 256 (in the case num_groups=9)
-        self.group_periods = np.power(2, np.arange(0, self.config.num_time_groups))
+        self.inputs  = tf.placeholder(tf.float32, shape=[None, self.config.num_timesteps, self.config.num_input], name="inputs")
+        self.targets = tf.placeholder(tf.float32, shape=[None, self.config.num_output], name="targets")
 
         # Build the complete model
         self._build_model()
-
-        # Build cost function
-        self._build_loss()
 
         # Initialize the optimizer with gradient clipping
         self._init_optimizer()
@@ -45,8 +50,12 @@ class ClockworkRNN(object):
 
         # Split into list of tensors, one for each timestep
         x_list = [tf.squeeze(x, squeeze_dims=[1]) for x in tf.split(1, self.config.num_timesteps, self.inputs, name="inputs_list")]
-        y_list = [tf.squeeze(x, squeeze_dims=[1]) for x in tf.split(1, self.config.num_timesteps, self.targets, name="targets_list")]
 
+        # Periods of each group: 1,2,4, ..., 256 (in the case num_groups=9)
+        self.clockwork_periods = np.power(2, np.arange(0, self.config.num_time_groups))
+
+        # Mask for matrix W_I to make sure it's upper triangular
+        self.clockwork_mask = tf.constant(np.triu(np.ones([self.config.num_hidden, self.config.num_hidden])), dtype=tf.float32, name="mask")
 
         with tf.variable_scope("input"):
             self.input_W = tf.get_variable("W", shape=[self.config.num_input, self.config.num_hidden], initializer=initializer_weights)    # W_I
@@ -54,8 +63,9 @@ class ClockworkRNN(object):
 
         with tf.variable_scope("hidden"):
             self.hidden_W = tf.get_variable("W", shape=[self.config.num_hidden, self.config.num_hidden], initializer=initializer_weights)  # W_H
+            self.hidden_W = tf.mul(self.hidden_W, self.clockwork_mask)  # => upper triangular matrix                                       # W_H
             self.hidden_b = tf.get_variable("b", shape=[self.config.num_hidden], initializer=initializer_bias)                             # b_H
-            # TODO: this should be an upper triangular matrix...
+
 
         with tf.variable_scope("output"):
             self.output_W = tf.get_variable("W", shape=[self.config.num_hidden, self.config.num_output], initializer=initializer_weights)  # W_O
@@ -75,60 +85,51 @@ class ClockworkRNN(object):
 
                 # Find the groups of the hidden layer that are active
                 group_index = 0
-                for i in range(len(self.group_periods)):
+                for i in range(len(self.clockwork_periods)):
                     # Check if (t MOD T_i == 0)
-                    if t % self.group_periods[i] == 0:
+                    if t % self.clockwork_periods[i] == 0:
                         group_index = i+1  # note the +1
 
-                # Compute W_I*x_t
+                # Compute (W_I*x_t + b_I)
                 WI_x = tf.matmul(x_list[t], tf.slice(self.input_W, [0, 0], [-1, group_index]))
                 WI_x = tf.nn.bias_add(WI_x, tf.slice(self.input_b, [0], [group_index]), name="WI_x")
 
-                # Compute W_H*y_{t-1}
+                # Compute (W_H*y_{t-1} + b_H), note the multiplication of the clockwork mask (upper triangular matrix)
+                self.hidden_W = tf.mul(self.hidden_W, self.clockwork_mask)
                 WH_y = tf.matmul(self.state, tf.slice(self.hidden_W, [0, 0], [-1, group_index]))
                 WH_y = tf.nn.bias_add(WH_y, tf.slice(self.hidden_b, [0], [group_index]), name="WH_y")
 
                 # Compute y_t = (...) and update the cell state
                 y_update = tf.add(WH_y, WI_x, name="state")
-                y_update = activation_hidden(self.state)  # tanh()
+                y_update = activation_hidden(y_update)
 
                 # Copy the updates to the cell state
-                # TODO: here...every example has its own state so this scatter_update is wrong
-                self.state = tf.scatter_update(self.state, range(group_index), y_update)
+                self.state = tf.concat(1, [y_update, tf.slice(self.state, [0, group_index], [-1,-1])])
 
-                # Compute the output, y = f(W_O*y_t)
+                # Compute the output, y = f(W_O*y_t + b_O)
                 self.output = tf.matmul(self.state, self.output_W)
                 self.output = tf.nn.bias_add(self.output, self.output_b)
-                self.output = activation_output(self.output, name="output")
-
+                #self.output = activation_output(self.output, name="output")
 
             # Save the final hidden state
             self.final_state = self.state
 
-
-    def _build_loss(self):
-
-        self.classification_loss = tf.reduce_sum(self.classification_losses)
-        tf.add_to_collection("losses", self.classification_loss)
-
-        # Weight decay regularization
-        # self.weight_decay_loss = tf.constant(0.0)
-        # if self.config.weight_decay > 0:
-        #     weights = tf.trainable_variables()
-        #     weights_norm = tf.Variable(0.0, trainable=False)
-        #     for w in weights:
-        #         weights_norm = tf.add(weights_norm, tf.reduce_sum(tf.square(w)))
-        #     self.weight_decay_loss = self.weight_decay_coeff * weights_norm
-        #     tf.add_to_collection("losses", self.weight_decay_loss)
-
-        # Collect and sum all the loss compontents
-        self.loss = tf.add_n(tf.get_collection("losses"), name="total_loss")
-
+            # Compute the L2 loss over the current batch
+            self.loss = tf.reduce_mean(tf.squared_difference(self.targets, self.output), name="l2_loss")
 
 
     def _init_optimizer(self):
 
-        # Learning rate decay, this is set from outside TensorFlow by the LearningRateScheduler
+        # Learning rate decay, note that is self.learning_rate_decay == 1.0,
+        # the decay schedule is disabled, i.e. learning rate is constant.
+        self.learning_rate = tf.train.exponential_decay(
+            self.config.learning_rate,
+            self.global_step,
+            self.config.learning_rate_step,
+            self.config.learning_rate_decay,
+            staircase=True
+        )
+        self.learning_rate = tf.maximum(self.learning_rate, self.config.learning_rate_min)
         tf.scalar_summary("learning_rate", self.learning_rate)
 
         # Definition of the optimizer and computing gradients operation
@@ -179,12 +180,6 @@ class ClockworkRNN(object):
 
 
     def _build_summary_ops(self):
-
-        # Placeholders for additional scalar summaries
-        self.pl_examples_per_second     = tf.placeholder(tf.float32)
-        self.pl_validation_loss         = tf.placeholder(tf.float32)
-        self.pl_validation_mse_error    = tf.placeholder(tf.float32)
-        self.pl_validation_frac_perfect = tf.placeholder(tf.float32)
 
         # Training summaries
         training_summaries = [
