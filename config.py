@@ -4,7 +4,7 @@ class Config(object):
     output_dir = "./output/"
 
     # Number of train and validation examples
-    num_train      = 1000
+    num_train      = 500
     num_validation = 200
 
     # Clockwork RNN parameters

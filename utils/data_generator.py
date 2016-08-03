@@ -7,7 +7,7 @@ from random import random
 # http://danielhnyk.cz/predicting-sequences-vectors-keras-using-rnn-lstm/
 
 
-def _load_data(data, n_prev = 100):
+def _load_data(data, n_prev=100):
     # data should be pd.DataFrame()
     docX, docY = [], []
     for i in range(len(data)-n_prev):
@@ -26,7 +26,7 @@ def train_test_split(df, test_size=0.1):
 
 
 def generate_data(num_examples):
-    print("Generating %i training examples..." % num_examples)
+    print("[x] Generating %i training examples..." % num_examples)
     flow = (list(range(1, 10, 1)) + list(range(10, 1, -1))) * num_examples
     pdata = pd.DataFrame({"a": flow, "b": flow})
     pdata.b = pdata.b.shift(9)

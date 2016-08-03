@@ -14,7 +14,7 @@ from utils.data_generator import *
 def train(config, train_data, validation_data):
 
     # Initialize TensorFlow model for counting as regression problem
-    print("Building TensorFlow Graph...")
+    print("[x] Building TensorFlow Graph...")
     model = ClockworkRNN(config)
 
     # Format the datasets for convenience
@@ -22,6 +22,7 @@ def train(config, train_data, validation_data):
     X_validation, y_validation = validation_data
 
     # Compute the number of training steps
+    print(X_train.shape)
     step_in_epoch, steps_per_epoch = 0, int(math.floor(len(X_train)/config.batch_size))
     num_steps = steps_per_epoch*config.num_epochs
     train_step = 0
@@ -94,6 +95,7 @@ def train(config, train_data, validation_data):
             # End of epoch, check some validation examples
             print("#" * 100)
             print("MODEL TESTING ON VALIDATION DATA (%i examples):" % config.num_validation)
+            print("...todo...")
 
             # validation_loss = sess.run(model.loss,
             #     feed_dict={
@@ -108,7 +110,8 @@ def train(config, train_data, validation_data):
             step_in_epoch = 0
 
             # Shuffle training data
-            perm = np.random.shuffle(np.arange(len(X_train)))
+            perm = np.arange(X_train.shape[0])
+            perm = np.random.shuffle(perm)
             X_train = X_train[perm]
             y_train = y_train[perm]
 
