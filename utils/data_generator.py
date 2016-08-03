@@ -2,7 +2,6 @@ import numpy as np
 import pandas as pd
 from random import random
 
-
 # Just a random example of sequences to train the Clockwork RNN.
 # http://danielhnyk.cz/predicting-sequences-vectors-keras-using-rnn-lstm/
 
@@ -26,7 +25,7 @@ def train_test_split(df, test_size=0.1):
 
 
 def generate_data(num_examples):
-    print("[x] Generating %i training examples..." % num_examples)
+    print("[x] Generating training examples...")
     flow = (list(range(1, 10, 1)) + list(range(10, 1, -1))) * num_examples
     pdata = pd.DataFrame({"a": flow, "b": flow})
     pdata.b = pdata.b.shift(9)

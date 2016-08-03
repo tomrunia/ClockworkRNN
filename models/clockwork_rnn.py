@@ -20,11 +20,17 @@ class ClockworkRNN(object):
 
         self.config = config
 
+        # Check if the number of groups (periods) in the hidden layer
+        # is compatible with the total number of units in the layer. Note that
+        # this is not a requirement in the paper; there the extra neurons are
+        # divided over the higher frequency groups.
+        assert self.config.num_hidden % len(self.config.periods) == 0
+
         # Global training step
         self.global_step = tf.Variable(0, name='global_step', trainable=False)
 
         # Initialize placeholders
-        self.inputs  = tf.placeholder(tf.float32, shape=[None, self.config.num_timesteps, self.config.num_input], name="inputs")
+        self.inputs  = tf.placeholder(tf.float32, shape=[None, self.config.num_steps, self.config.num_input], name="inputs")
         self.targets = tf.placeholder(tf.float32, shape=[None, self.config.num_output], name="targets")
 
         # Build the complete model
@@ -42,17 +48,16 @@ class ClockworkRNN(object):
         # Weight and bias initializers
         initializer_weights = tf.contrib.layers.variance_scaling_initializer()
         initializer_bias    = tf.constant_initializer(0.0)
-        initializer_lstm    = None
 
         # Activation functions of the hidden and output state
         activation_hidden = tf.tanh
         activation_output = tf.nn.relu
 
         # Split into list of tensors, one for each timestep
-        x_list = [tf.squeeze(x, squeeze_dims=[1]) for x in tf.split(1, self.config.num_timesteps, self.inputs, name="inputs_list")]
+        x_list = [tf.squeeze(x, squeeze_dims=[1]) for x in tf.split(1, self.config.num_steps, self.inputs, name="inputs_list")]
 
-        # Periods of each group: 1,2,4, ..., 256 (in the case num_groups=9)
-        self.clockwork_periods = np.power(2, np.arange(0, self.config.num_time_groups))
+        # Periods of each group: 1,2,4, ..., 256 (in the case num_periods=9)
+        self.clockwork_periods = self.config.periods
 
         # Mask for matrix W_I to make sure it's upper triangular
         self.clockwork_mask = tf.constant(np.triu(np.ones([self.config.num_hidden, self.config.num_hidden])), dtype=tf.float32, name="mask")
@@ -66,32 +71,29 @@ class ClockworkRNN(object):
             self.hidden_W = tf.mul(self.hidden_W, self.clockwork_mask)  # => upper triangular matrix                                       # W_H
             self.hidden_b = tf.get_variable("b", shape=[self.config.num_hidden], initializer=initializer_bias)                             # b_H
 
-
         with tf.variable_scope("output"):
             self.output_W = tf.get_variable("W", shape=[self.config.num_hidden, self.config.num_output], initializer=initializer_weights)  # W_O
             self.output_b = tf.get_variable("b", shape=[self.config.num_output], initializer=initializer_bias)                             # b_O
-
 
         with tf.variable_scope("clockwork_cell") as scope:
 
             # Initialize the hidden state of the cell to zero (this is y_{t_1})
             self.state = tf.get_variable("state", shape=[self.config.batch_size, self.config.num_hidden], initializer=tf.zeros_initializer, trainable=False)
 
-            for t in range(self.config.num_timesteps):
+            for time_step in range(self.config.num_steps):
 
                 # Only initialize variables in the first step
-                if t != 0:
-                    scope.reuse_variables()
+                if time_step > 0: scope.reuse_variables()
 
                 # Find the groups of the hidden layer that are active
                 group_index = 0
                 for i in range(len(self.clockwork_periods)):
                     # Check if (t MOD T_i == 0)
-                    if t % self.clockwork_periods[i] == 0:
+                    if time_step % self.clockwork_periods[i] == 0:
                         group_index = i+1  # note the +1
 
                 # Compute (W_I*x_t + b_I)
-                WI_x = tf.matmul(x_list[t], tf.slice(self.input_W, [0, 0], [-1, group_index]))
+                WI_x = tf.matmul(x_list[time_step], tf.slice(self.input_W, [0, 0], [-1, group_index]))
                 WI_x = tf.nn.bias_add(WI_x, tf.slice(self.input_b, [0], [group_index]), name="WI_x")
 
                 # Compute (W_H*y_{t-1} + b_H), note the multiplication of the clockwork mask (upper triangular matrix)
@@ -106,16 +108,17 @@ class ClockworkRNN(object):
                 # Copy the updates to the cell state
                 self.state = tf.concat(1, [y_update, tf.slice(self.state, [0, group_index], [-1,-1])])
 
-                # Compute the output, y = f(W_O*y_t + b_O)
-                self.output = tf.matmul(self.state, self.output_W)
-                self.output = tf.nn.bias_add(self.output, self.output_b)
-                #self.output = activation_output(self.output, name="output")
-
             # Save the final hidden state
             self.final_state = self.state
 
-            # Compute the L2 loss over the current batch
-            self.loss = tf.reduce_mean(tf.squared_difference(self.targets, self.output), name="l2_loss")
+            # Compute the output, y = f(W_O*y_t + b_O)
+            self.predictions = tf.matmul(self.final_state, self.output_W)
+            self.predictions = tf.nn.bias_add(self.predictions, self.output_b)
+            #self.predictions = activation_output(self.predictions, name="output")
+
+            # Compute the loss
+            self.error = tf.reduce_sum(tf.square(self.targets - self.predictions), reduction_indices=1)
+            self.loss  = tf.reduce_mean(self.error, name="loss")
 
 
     def _init_optimizer(self):

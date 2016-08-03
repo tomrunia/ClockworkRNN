@@ -3,26 +3,40 @@ import os
 import math
 import numpy as np
 
+import matplotlib as mpl
+import matplotlib.pyplot as plt
+import seaborn as sns
+
 import tensorflow as tf
 from tensorflow.python.framework import ops
+
+from sklearn.utils import shuffle
 
 from models.clockwork_rnn import ClockworkRNN
 from config import Config
 from utils.data_generator import *
 
 
-def train(config, train_data, validation_data):
+def train(config):
+
+    plt.ion()
+    plt.plot(1)
+    plt.show()
+
+    # Load the training data
+    (X_train, y_train), (X_validation, y_validation) = generate_data(1000)
+    num_train      = X_train.shape[0]
+    num_validation = X_validation.shape[0]
+
+    config.num_steps  = X_train.shape[1]
+    config.num_input  = X_train.shape[2]
+    config.num_output = y_train.shape[1]
 
     # Initialize TensorFlow model for counting as regression problem
     print("[x] Building TensorFlow Graph...")
     model = ClockworkRNN(config)
 
-    # Format the datasets for convenience
-    X_train, y_train = train_data
-    X_validation, y_validation = validation_data
-
     # Compute the number of training steps
-    print(X_train.shape)
     step_in_epoch, steps_per_epoch = 0, int(math.floor(len(X_train)/config.batch_size))
     num_steps = steps_per_epoch*config.num_epochs
     train_step = 0
@@ -74,7 +88,7 @@ def train(config, train_data, validation_data):
             }
         )
 
-        print("[%s] Step %05i/%05i, LR = %.2e, Loss = %.3f" %
+        print("[%s] Step %05i/%05i, LR = %.2e, Loss = %.5f" %
              (datetime.now().strftime("%Y-%m-%d %H:%M"), train_step, num_steps, learning_rate, train_loss))
 
         # Save summaries to disk
@@ -94,27 +108,45 @@ def train(config, train_data, validation_data):
 
             # End of epoch, check some validation examples
             print("#" * 100)
-            print("MODEL TESTING ON VALIDATION DATA (%i examples):" % config.num_validation)
-            print("...todo...")
+            print("MODEL TESTING ON VALIDATION DATA (%i examples):" % num_validation)
 
-            # validation_loss = sess.run(model.loss,
-            #     feed_dict={
-            #         model.inputs:  X_validation[0:config.batch_size,],
-            #         model.targets: y_validation[0:config.batch_size,],
-            #     }
-            # )
-            # print("[%s] Step %05i/%05i, LR = %.2e, Loss = %.3f" %
-            #       (datetime.now().strftime("%Y-%m-%d %H:%M"), train_step, num_steps, learning_rate, train_loss))
+            for validation_step in range(int(math.floor(num_validation/config.batch_size))):
 
-            # Reset epoch counter
+                index_start = validation_step*config.batch_size
+                index_end   = index_start+config.batch_size
+
+                validation_loss, predictions = sess.run([model.loss, model.predictions],
+                    feed_dict={
+                        model.inputs:  X_validation[index_start:index_end,],
+                        model.targets: y_validation[index_start:index_end,],
+                    }
+                )
+
+                # Show a plot of the ground truth and prediction of the singla
+                if validation_step == 0:
+                    plt.clf()
+                    plt.title("Ground Truth and Predictions")
+                    plt.plot(y_validation[index_start:index_start+50,0], label="signal 0 (input)")
+                    plt.plot(predictions[0:50,0], ls='--', label="signal 0 (prediction)")
+                    plt.plot(y_validation[index_start:index_start+50,1], label="signal 1 (input)")
+                    plt.plot(predictions[0:50,1], ls='--', label="signal 1 (prediction)")
+                    legend = plt.legend(frameon=True)
+                    legend.get_frame().set_facecolor('white')
+                    plt.draw()
+                    plt.pause(0.001)
+
+                print("[%s] Validation Step %03i. Loss = %.5f" % (datetime.now().strftime("%Y-%m-%d %H:%M"), validation_step, validation_loss))
+
+            # Reset for next epoch
             step_in_epoch = 0
 
             # Shuffle training data
-            perm = np.arange(X_train.shape[0])
-            perm = np.random.shuffle(perm)
+            perm = np.arange(num_train)
+            np.random.shuffle(perm)
             X_train = X_train[perm]
             y_train = y_train[perm]
 
+            print("#" * 100)
 
     # Destroy the graph and close the session
     ops.reset_default_graph()
@@ -122,11 +154,4 @@ def train(config, train_data, validation_data):
 
 
 if __name__ == "__main__":
-
-    config = Config()
-
-    # Load training and validation data
-    data_train, data_test = generate_data(config.num_train)
-
-    # Start training procedure
-    train(config, data_train, data_test)
+    train(Config())

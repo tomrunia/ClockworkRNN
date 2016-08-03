@@ -3,29 +3,23 @@ class Config(object):
 
     output_dir = "./output/"
 
-    # Number of train and validation examples
-    num_train      = 500
-    num_validation = 200
-
     # Clockwork RNN parameters
-    num_timesteps   = 100
-    num_time_groups = 9
-    num_input  = 2
-    num_hidden = 27
-    num_output = 2
+    periods     = [1, 2, 4, 8, 16, 32, 64] #, 128, 256]
+    num_steps   = 100
+    num_input   = 2
+    num_hidden  = 294
+    num_output  = 2
 
     # Optmization parameters
     num_epochs          = 100
-    batch_size          = 32
+    batch_size          = 256
     optimizer           = "rmsprop"
-    dropout_keep_prob   = 1.0
     max_norm_gradient   = 10.0
-    weight_decay        = 1e-5
 
     # Learning rate decay schedule
-    learning_rate       = 3e-4
-    learning_rate_decay = 0.98
-    learning_rate_step  = 500
+    learning_rate       = 1e-3
+    learning_rate_decay = 0.975
+    learning_rate_step  = 1000
     learning_rate_min   = 1e-5
 
 
