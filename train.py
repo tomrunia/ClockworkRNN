@@ -5,7 +5,6 @@ import numpy as np
 
 import matplotlib as mpl
 import matplotlib.pyplot as plt
-import seaborn as sns
 
 import tensorflow as tf
 from tensorflow.python.framework import ops
@@ -20,8 +19,6 @@ from utils.data_generator import *
 def train(config):
 
     plt.ion()
-    plt.plot(1)
-    plt.show()
 
     # Load the training data
     (X_train, y_train), (X_validation, y_validation) = generate_data(1000)
@@ -60,10 +57,10 @@ def train(config):
 
     # Initialize summary writer
     summary_out_dir = os.path.join(config.output_dir, "summaries")
-    summary_writer  = tf.train.SummaryWriter(summary_out_dir, sess.graph)
+    summary_writer  = tf.summary.FileWriter(summary_out_dir, sess.graph)
 
     # Initialize the session
-    init = tf.initialize_all_variables()
+    init = tf.global_variables_initializer()
     sess.run(init)
 
     for _ in range(num_steps):
@@ -88,8 +85,9 @@ def train(config):
             }
         )
 
-        print("[%s] Step %05i/%05i, LR = %.2e, Loss = %.5f" %
-             (datetime.now().strftime("%Y-%m-%d %H:%M"), train_step, num_steps, learning_rate, train_loss))
+        if train_step % 10 == 0:
+            print("[%s] Step %05i/%05i, LR = %.2e, Loss = %.5f" %
+                (datetime.now().strftime("%Y-%m-%d %H:%M"), train_step, num_steps, learning_rate, train_loss))
 
         # Save summaries to disk
         summary_writer.add_summary(train_summary, train_step)

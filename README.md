@@ -5,5 +5,5 @@ This is a **TensorFlow** implementation of the **Clockwork RNN** proposed by Kou
 ## Dependencies
 
 * NumPy
-* TensorFlow (tested with v0.9)
+* TensorFlow (tested with v1.0)
 * Optionally MatplotLib and Pandas when using the data generator

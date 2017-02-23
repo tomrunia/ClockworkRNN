@@ -30,8 +30,15 @@ class ClockworkRNN(object):
         self.global_step = tf.Variable(0, name='global_step', trainable=False)
 
         # Initialize placeholders
-        self.inputs  = tf.placeholder(tf.float32, shape=[None, self.config.num_steps, self.config.num_input], name="inputs")
-        self.targets = tf.placeholder(tf.float32, shape=[None, self.config.num_output], name="targets")
+        self.inputs  = tf.placeholder(
+            dtype=tf.float32,
+            shape=[None, self.config.num_steps, self.config.num_input],
+            name="inputs")
+
+        self.targets = tf.placeholder(
+            dtype=tf.float32,
+            shape=[None, self.config.num_output],
+            name="targets")
 
         # Build the complete model
         self._build_model()
@@ -54,7 +61,10 @@ class ClockworkRNN(object):
         activation_output = tf.nn.relu
 
         # Split into list of tensors, one for each timestep
-        x_list = [tf.squeeze(x, squeeze_dims=[1]) for x in tf.split(1, self.config.num_steps, self.inputs, name="inputs_list")]
+        x_list = [tf.squeeze(x, axis=[1])
+                  for x in tf.split(
+                    axis=1, num_or_size_splits=self.config.num_steps,
+                    value=self.inputs, name="inputs_list")]
 
         # Periods of each group: 1,2,4, ..., 256 (in the case num_periods=9)
         self.clockwork_periods = self.config.periods
@@ -68,7 +78,7 @@ class ClockworkRNN(object):
 
         with tf.variable_scope("hidden"):
             self.hidden_W = tf.get_variable("W", shape=[self.config.num_hidden, self.config.num_hidden], initializer=initializer_weights)  # W_H
-            self.hidden_W = tf.mul(self.hidden_W, self.clockwork_mask)  # => upper triangular matrix                                       # W_H
+            self.hidden_W = tf.multiply(self.hidden_W, self.clockwork_mask)  # => upper triangular matrix                                  # W_H
             self.hidden_b = tf.get_variable("b", shape=[self.config.num_hidden], initializer=initializer_bias)                             # b_H
 
         with tf.variable_scope("output"):
@@ -78,7 +88,7 @@ class ClockworkRNN(object):
         with tf.variable_scope("clockwork_cell") as scope:
 
             # Initialize the hidden state of the cell to zero (this is y_{t_1})
-            self.state = tf.get_variable("state", shape=[self.config.batch_size, self.config.num_hidden], initializer=tf.zeros_initializer, trainable=False)
+            self.state = tf.get_variable("state", shape=[self.config.batch_size, self.config.num_hidden], initializer=tf.zeros_initializer(), trainable=False)
 
             for time_step in range(self.config.num_steps):
 
@@ -97,16 +107,17 @@ class ClockworkRNN(object):
                 WI_x = tf.nn.bias_add(WI_x, tf.slice(self.input_b, [0], [group_index]), name="WI_x")
 
                 # Compute (W_H*y_{t-1} + b_H), note the multiplication of the clockwork mask (upper triangular matrix)
-                self.hidden_W = tf.mul(self.hidden_W, self.clockwork_mask)
+                self.hidden_W = tf.multiply(self.hidden_W, self.clockwork_mask)
                 WH_y = tf.matmul(self.state, tf.slice(self.hidden_W, [0, 0], [-1, group_index]))
                 WH_y = tf.nn.bias_add(WH_y, tf.slice(self.hidden_b, [0], [group_index]), name="WH_y")
 
                 # Compute y_t = (...) and update the cell state
-                y_update = tf.add(WH_y, WI_x, name="state")
+                y_update = tf.add(WH_y, WI_x, name="state_update")
                 y_update = activation_hidden(y_update)
 
                 # Copy the updates to the cell state
-                self.state = tf.concat(1, [y_update, tf.slice(self.state, [0, group_index], [-1,-1])])
+                self.state = tf.concat(
+                    axis=1, values=[y_update, tf.slice(self.state, [0, group_index], [-1,-1])])
 
             # Save the final hidden state
             self.final_state = self.state
@@ -117,7 +128,7 @@ class ClockworkRNN(object):
             #self.predictions = activation_output(self.predictions, name="output")
 
             # Compute the loss
-            self.error = tf.reduce_sum(tf.square(self.targets - self.predictions), reduction_indices=1)
+            self.error = tf.reduce_sum(tf.square(self.targets - self.predictions), axis=1)
             self.loss  = tf.reduce_mean(self.error, name="loss")
 
 
@@ -133,7 +144,7 @@ class ClockworkRNN(object):
             staircase=True
         )
         self.learning_rate = tf.maximum(self.learning_rate, self.config.learning_rate_min)
-        tf.scalar_summary("learning_rate", self.learning_rate)
+        tf.summary.scalar("learning_rate", self.learning_rate)
 
         # Definition of the optimizer and computing gradients operation
         if self.config.optimizer == 'adam':
@@ -175,22 +186,21 @@ class ClockworkRNN(object):
         grad_summaries = []
         for g, v in self.grads_and_vars:
             if g is not None:
-                grad_hist_summary = tf.histogram_summary("gradients/{}/hist".format(v.name), g)
-                sparsity_summary  = tf.scalar_summary("gradients/{}/sparsity".format(v.name), tf.nn.zero_fraction(g))
+                grad_hist_summary = tf.summary.histogram("gradients/{}/hist".format(v.name), g)
+                sparsity_summary  = tf.summary.scalar("gradients/{}/sparsity".format(v.name), tf.nn.zero_fraction(g))
                 grad_summaries.append(grad_hist_summary)
                 grad_summaries.append(sparsity_summary)
-        self.gradient_summaries_merged = tf.merge_summary(grad_summaries)
+        self.gradient_summaries_merged = tf.summary.merge(grad_summaries)
 
 
     def _build_summary_ops(self):
 
         # Training summaries
         training_summaries = [
-            tf.scalar_summary("train/loss", self.loss),
-            tf.scalar_summary("train/learning_rate", self.learning_rate),
+            tf.summary.scalar("train/loss", self.loss),
+            tf.summary.scalar("train/learning_rate", self.learning_rate),
         ]
 
         # Combine the training summaries with the gradient summaries
-        self.train_summary_op = tf.merge_summary([training_summaries, self.gradient_summaries_merged])
-
-
+        self.train_summary_op = tf.summary.merge(
+            [training_summaries, self.gradient_summaries_merged])
